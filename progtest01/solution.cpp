@@ -31,6 +31,35 @@
 using namespace std;
 #endif /* __PROGTEST__ */
 
+class Problem {
+public:
+	ACustomer customer;
+	AOrderList orderList;
+
+	Problem() = default;
+
+	Problem(ACustomer & cust, AOrderList orders) : customer( cust ), orderList( std::move( orders ) ) {}
+
+	Problem & operator=(const Problem & prob) {
+		this->customer = prob.customer;
+		this->orderList = prob.orderList;
+		return *this;
+	}
+
+	Problem(const Problem & prob) {
+		this->customer = prob.customer;
+		this->orderList = prob.orderList;
+	}
+};
+
+class MaterialInfo {
+public:
+
+	APriceList priceList;
+	unsigned counter;
+
+};
+
 class CWeldingCompany {
 public:
 	static void SeqSolve(APriceList priceList, COrder & order);
@@ -38,39 +67,121 @@ public:
 	void AddCustomer(ACustomer cust);
 	void AddPriceList(AProducer prod, APriceList priceList);
 	void Start(unsigned thrCount);
-	void Stop(void);
+	void Stop();
+	APriceList CheckForPriceList(unsigned materialID);
+	static void serveCustomerThread(CWeldingCompany & company, const ACustomer & cust);
+	static void solveProblemsFromBuffer(CWeldingCompany & company);
+
+private:
+	map<unsigned, MaterialInfo> mPriceLists;
+
+	vector<AProducer> mProducers;
+	vector<ACustomer> mCustomers;
+
+	vector<Problem> buffer;
+	vector<pair<unsigned, unsigned long long>> mPriceListsTimers;
+
+	vector<thread> mWorkers;
+	vector<thread> mCustomerThreads;
+
+	bool stop_flag = false;
+	unsigned long long activeCustomers;
+	mutex mtx_stop, mtx_buffer, mtx_priceList, mtx_activeCustomers;
 };
 
-void CWeldingCompany::SeqSolve(APriceList priceList, COrder & order) {
-	vector<COrder> orderVector {order};
-	ProgtestSolver(orderVector, priceList);
+/* static */ void CWeldingCompany::SeqSolve(APriceList priceList, COrder & order) {
+	vector<COrder> orderVector{order};
+	ProgtestSolver( orderVector, move( priceList ) );
 	order = orderVector.front();
 }
 
 void CWeldingCompany::AddProducer(AProducer prod) {
-
+	mProducers.push_back( prod );
 }
 
 void CWeldingCompany::AddCustomer(ACustomer cust) {
-
+	mCustomers.push_back( cust );
 }
 
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
+	// TODO: AddPriceList -
 
 }
 
 void CWeldingCompany::Start(unsigned thrCount) {
+	// TODO: vlakna pro customery zacnou vybirat ulohy a rikat si o priceListy
+	mWorkers.reserve( mCustomers.size() );
+	mCustomerThreads.reserve( mCustomers.size() );
+	activeCustomers = mCustomers.size();
+
+	for ( unsigned int i = 0 ; i < thrCount ; ++i ) {
+		mWorkers.emplace_back( solveProblemsFromBuffer, this );
+	}
+
+	for ( auto & mCustomer : mCustomers ) {
+		mCustomerThreads.emplace_back( serveCustomerThread, this, ref( mCustomer ) );
+	}
+
+	// TODO: worker vlakna zacnou tahat z bufferu ulohy, pocitat je a vracet
+
 
 }
 
-void CWeldingCompany::Stop(void) {
+APriceList CWeldingCompany::CheckForPriceList(unsigned materialID) {
+	unique_lock<mutex> lock( mtx_priceList );
+	auto info = mPriceLists.find( materialID );
+	if ( info != mPriceLists.end() ) {
+		return mPriceLists.at( materialID ).priceList;
+	}
+	lock.unlock();
+	// TODO: bloknout, dokud se nevrati PriceList od všech
+	for ( auto & producer : mProducers ) {
+		producer->SendPriceList( materialID );
+	}
 
+	// TODO: create new priceList for this material, add it to the list and return it
+	return nullptr;
+}
+
+void CWeldingCompany::Stop() {
+	{
+		unique_lock<mutex> ul( mtx_stop );
+		stop_flag = true;
+	}
+
+	for ( auto & t : mWorkers ) {
+		t.join();
+	}
+
+	for ( auto & t : mCustomerThreads ) {
+		t.join();
+	}
+
+}
+
+void CWeldingCompany::serveCustomerThread(CWeldingCompany & company, const ACustomer & cust) {
+	while ( true ) {
+		AOrderList orderList = cust->WaitForDemand();
+		if ( orderList->m_List.empty() ) {
+			unique_lock<mutex> lock( company.mtx_activeCustomers );
+			company.activeCustomers--;
+			break;
+		}
+
+		company.CheckForPriceList( orderList->m_MaterialID );
+		// TODO: put into buffer
+
+	}
+}
+
+void CWeldingCompany::solveProblemsFromBuffer(CWeldingCompany & company) {
+	// TODO!! workers
 }
 
 //-------------------------------------------------------------------------------------------------
 #ifndef __PROGTEST__
 
-int main(void) {
+int main() {
 	using namespace std::placeholders;
 	CWeldingCompany test;
 
