@@ -38,7 +38,7 @@ public:
 
 	Problem() = default;
 
-	Problem(ACustomer & cust, AOrderList orders) : customer( cust ), orderList( std::move( orders ) ) {}
+	Problem(ACustomer cust, AOrderList orders) : customer( cust ), orderList( std::move( orders ) ) {}
 
 	Problem & operator=(const Problem & prob) {
 		this->customer = prob.customer;
@@ -54,7 +54,6 @@ public:
 
 class MaterialInfo {
 public:
-
 	APriceList priceList;
 	unsigned counter;
 
@@ -84,9 +83,9 @@ private:
 	vector<thread> mWorkers;
 	vector<thread> mCustomerThreads;
 
-	bool stop_flag = false;
-	unsigned long long activeCustomers;
+    long long int activeCustomers = -1;
 	mutex mtx_stop, mtx_buffer, mtx_priceList, mtx_activeCustomers;
+	condition_variable cv_customer;
 };
 
 /* static */ void CWeldingCompany::SeqSolve(APriceList priceList, COrder & order) {
@@ -105,6 +104,7 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
 
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
 	// TODO: AddPriceList -
+	cv_customer.notify_all();
 
 }
 
@@ -112,7 +112,7 @@ void CWeldingCompany::Start(unsigned thrCount) {
 	// TODO: vlakna pro customery zacnou vybirat ulohy a rikat si o priceListy
 	mWorkers.reserve( mCustomers.size() );
 	mCustomerThreads.reserve( mCustomers.size() );
-	activeCustomers = mCustomers.size();
+	activeCustomers = static_cast<long long int>(mCustomers.size());
 
 	for ( unsigned int i = 0 ; i < thrCount ; ++i ) {
 		mWorkers.emplace_back( solveProblemsFromBuffer, this );
@@ -146,7 +146,6 @@ APriceList CWeldingCompany::CheckForPriceList(unsigned materialID) {
 void CWeldingCompany::Stop() {
 	{
 		unique_lock<mutex> ul( mtx_stop );
-		stop_flag = true;
 	}
 
 	for ( auto & t : mWorkers ) {
@@ -169,7 +168,15 @@ void CWeldingCompany::serveCustomerThread(CWeldingCompany & company, const ACust
 		}
 
 		company.CheckForPriceList( orderList->m_MaterialID );
-		// TODO: put into buffer
+
+		unique_lock<mutex> lock( company.mtx_priceList );
+		company.cv_customer.wait( lock, company.mPriceLists[orderList->m_MaterialID].counter != 0 );
+
+		{
+			unique_lock<mutex> lock( company.mtx_buffer );
+			company.buffer.emplace_back( Problem( cust, orderList ) );
+		}
+
 
 	}
 }
