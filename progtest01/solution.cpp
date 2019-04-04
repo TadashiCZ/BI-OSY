@@ -84,9 +84,16 @@ public:
 	void customerThreadFunction( ACustomer & cust );
 	void workerThreadFunction();
 	APriceList checkForPriceList( unsigned materialID );
+	bool compareProducts(CProd & oldProd, CProd & newProd){
+		return ((oldProd.m_H == newProd.m_H && oldProd.m_W == newProd.m_W) || ( oldProd.m_W == newProd.m_H && oldProd.m_H == newProd.m_W ));
+	}
+
 private:
 	map<unsigned, MaterialInfo> mPriceLists;
 	mutex mtx_priceList;
+	condition_variable cv_priceListExists;
+	condition_variable cv_priceListIsFull;
+
 
 	vector<AProducer> mProducers;
 	vector<ACustomer> mCustomers;
@@ -94,6 +101,9 @@ private:
 	queue<Problem> mBuffer;
 	mutex mtx_buffer;
 	condition_variable cv_buffer;
+
+
+
 
 	vector<thread> mWorkers;
 	vector<thread> mCustomerThreads;
@@ -104,8 +114,7 @@ private:
 
 	unsigned mThrCount = 0;
 
-	condition_variable cv_PriceListQueue;
-	mutex mtx_priceListQueue;
+
 };
 
 /* static */ void CWeldingCompany::SeqSolve( APriceList priceList, COrder & order ) {
@@ -125,36 +134,34 @@ void CWeldingCompany::AddCustomer( ACustomer cust ) {
 void CWeldingCompany::AddPriceList( AProducer prod, APriceList priceList ) {
 	AProducer producer = prod;
 	{
-		unique_lock<mutex>(mtx_priceList);
+		unique_lock<mutex> lock( mtx_priceList );
 
-		if ( mPriceLists.at( priceList->m_MaterialID ).priceList == nullptr ) {
-			cout << "ERROR: No priceList" << endl;
-			return;
+		auto it = mPriceLists.find( priceList->m_MaterialID );
+
+		if ( it == mPriceLists.end() ) {
+			mPriceLists.insert( pair<unsigned, MaterialInfo>(
+					priceList->m_MaterialID,
+					MaterialInfo( mCustomers.size(), make_shared<CPriceList>( priceList->m_MaterialID ) ) ) );
 		}
 
-		for ( auto itAlready = mPriceLists.at( priceList->m_MaterialID ).priceList->m_List.begin() ;
-		      itAlready != mPriceLists.at( priceList->m_MaterialID ).priceList->m_List.end() ; ++itAlready ) {
-			for ( auto itNotYet = priceList->m_List.begin() ; itNotYet != priceList->m_List.end() ; ++itNotYet ) {
+		MaterialInfo matInfo = mPriceLists.at( priceList->m_MaterialID );
 
-				if ( ( itAlready->m_H == itNotYet->m_H && itAlready->m_W == itNotYet->m_W ) ||
-				     ( itAlready->m_W == itNotYet->m_H && itAlready->m_H == itNotYet->m_W ) ) {
-					if ( itAlready->m_Cost <= itNotYet->m_Cost ) {
-						priceList->m_List.erase( itNotYet );
+		for ( auto itNotYet = priceList->m_List.begin() ; itNotYet != priceList->m_List.end() ; ++itNotYet ) {
+			for ( auto & itAlready : matInfo.priceList->m_List ) {
+				if ( compareProducts( itAlready, *itNotYet ) ) {
+					if ( itAlready.m_Cost <= itNotYet->m_Cost ) {
 						continue;
 					} else {
-						itAlready->m_Cost = itNotYet->m_Cost;
-						priceList->m_List.erase( itNotYet );
+						itAlready.m_Cost = itNotYet->m_Cost;
+						continue;
 					}
 				}
 			}
+			mPriceLists[priceList->m_MaterialID].priceList->m_List.push_back( *itNotYet );
 		}
 
-		mPriceLists.at( priceList->m_MaterialID ).priceList->m_List.insert(
-				mPriceLists.at( priceList->m_MaterialID ).priceList->m_List.end(), priceList->m_List.begin(),
-				priceList->m_List.end() );
-
-		mPriceLists.at( mPriceLists.at( priceList->m_MaterialID ).priceList->m_MaterialID ).counter--;
-		cv_PriceListQueue.notify_all();
+		mPriceLists.at( priceList->m_MaterialID ).counter--;
+		cv_priceListIsFull.notify_all();
 	}
 }
 
@@ -176,6 +183,7 @@ void CWeldingCompany::Start( unsigned thrCount ) {
 	}
 
 }
+// TODO DEADLOCK DEADLOCK DEADLOCK
 
 APriceList CWeldingCompany::checkForPriceList( unsigned materialID ) {
 	if ( mPriceLists.find( materialID ) != mPriceLists.end() ) {
@@ -187,12 +195,9 @@ APriceList CWeldingCompany::checkForPriceList( unsigned materialID ) {
 				                              MaterialInfo( mCustomers.size(), make_shared<CPriceList>( materialID ) ) ) );
 
 		// call for priceLists
-		for ( auto & producer :  mProducers ) {
-			producer->SendPriceList( materialID );
-		}
 
-		unique_lock<mutex> lock( mtx_priceListQueue );
-		cv_PriceListQueue.wait( lock, [&] { return mPriceLists[materialID].counter != 0; } );
+		unique_lock<mutex> lock( mtx_priceList );
+		cv_priceListIsFull.wait( lock, [&] { return mPriceLists[materialID].counter != 0; } );
 	}
 
 	return mPriceLists[materialID].priceList;
@@ -232,6 +237,11 @@ void CWeldingCompany::customerThreadFunction( ACustomer & cust ) {
 			}
 			break;
 		}
+
+		for ( auto & producer :  mProducers ) {
+			producer->SendPriceList( orderList->m_MaterialID );
+		}
+
 		// get priceList
 		APriceList priceList = checkForPriceList( orderList->m_MaterialID );
 
