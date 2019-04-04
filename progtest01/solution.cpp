@@ -81,11 +81,13 @@ public:
 	void AddPriceList( AProducer prod, APriceList priceList );
 	void Start( unsigned thrCount );
 	void Stop();
-	void customerThreadFunction( ACustomer & cust );
+	void customerThreadFunction( const ACustomer cust );
 	void workerThreadFunction();
 	APriceList checkForPriceList( unsigned materialID );
-	bool compareProducts(CProd & oldProd, CProd & newProd){
-		return ((oldProd.m_H == newProd.m_H && oldProd.m_W == newProd.m_W) || ( oldProd.m_W == newProd.m_H && oldProd.m_H == newProd.m_W ));
+
+	bool compareProducts( CProd & oldProd, CProd & newProd ) {
+		return ( ( oldProd.m_H == newProd.m_H && oldProd.m_W == newProd.m_W ) ||
+		         ( oldProd.m_W == newProd.m_H && oldProd.m_H == newProd.m_W ) );
 	}
 
 private:
@@ -94,16 +96,12 @@ private:
 	condition_variable cv_priceListExists;
 	condition_variable cv_priceListIsFull;
 
-
 	vector<AProducer> mProducers;
 	vector<ACustomer> mCustomers;
 
 	queue<Problem> mBuffer;
 	mutex mtx_buffer;
 	condition_variable cv_buffer;
-
-
-
 
 	vector<thread> mWorkers;
 	vector<thread> mCustomerThreads;
@@ -224,7 +222,7 @@ void CWeldingCompany::Stop() {
 
 }
 
-void CWeldingCompany::customerThreadFunction( ACustomer & cust ) {
+void CWeldingCompany::customerThreadFunction( const ACustomer cust ) {
 	cout << "Start customerThreadFunction\n";
 	while ( true ) {
 		// get orderList
@@ -276,19 +274,15 @@ void CWeldingCompany::workerThreadFunction() {
 			}
 		}
 
-
+		Problem prob;
 		{
 			unique_lock<mutex> lock( mtx_buffer );
 			if ( mBuffer.empty() ) {
 				continue;
+			} else {
+				prob = mBuffer.front();
+				mBuffer.pop();
 			}
-		}
-
-		Problem prob;
-		{
-			unique_lock<mutex> lock( mtx_buffer );
-			prob = mBuffer.front();
-			mBuffer.pop();
 		}
 
 		APriceList priceList;
