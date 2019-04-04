@@ -142,6 +142,7 @@ void CWeldingCompany::AddPriceList( AProducer prod, APriceList priceList ) {
 					MaterialInfo( mCustomers.size(), make_shared<CPriceList>( priceList->m_MaterialID ) ) ) );
 		}
 
+		cv_priceListExists.notify_all();
 		MaterialInfo matInfo = mPriceLists.at( priceList->m_MaterialID );
 
 		for ( auto itNotYet = priceList->m_List.begin() ; itNotYet != priceList->m_List.end() ; ++itNotYet ) {
@@ -181,24 +182,19 @@ void CWeldingCompany::Start( unsigned thrCount ) {
 	}
 
 }
-// TODO DEADLOCK DEADLOCK DEADLOCK
 
 APriceList CWeldingCompany::checkForPriceList( unsigned materialID ) {
+	unique_lock<mutex> lock( mtx_priceList );
 	if ( mPriceLists.find( materialID ) != mPriceLists.end() ) {
-		return mPriceLists.at( materialID ).priceList;
+		if ( mPriceLists.at( materialID ).counter == 0 ) {
+			return mPriceLists.at( materialID ).priceList;
+		}
 	} else {
-		// insert empty and init counter
-		mPriceLists.insert(
-				pair<unsigned, MaterialInfo>( materialID,
-				                              MaterialInfo( mCustomers.size(), make_shared<CPriceList>( materialID ) ) ) );
-
-		// call for priceLists
-
-		unique_lock<mutex> lock( mtx_priceList );
-		cv_priceListIsFull.wait( lock, [&] { return mPriceLists[materialID].counter != 0; } );
+		cv_priceListExists.wait( lock, [&] { return mPriceLists.find( materialID ) != mPriceLists.end(); } );
+		cv_priceListIsFull.wait( lock, [&] { return mPriceLists[materialID].counter == 0; } );
 	}
 
-	return mPriceLists[materialID].priceList;
+	return mPriceLists.at( materialID ).priceList;
 
 }
 
@@ -279,7 +275,13 @@ void CWeldingCompany::workerThreadFunction() {
 			unique_lock<mutex> lock( mtx_buffer );
 			if ( mBuffer.empty() ) {
 				continue;
-			} else {
+			}
+		}
+
+
+		{
+			unique_lock<mutex> lock( mtx_buffer );
+			if ( !mBuffer.empty() ) {
 				prob = mBuffer.front();
 				mBuffer.pop();
 			}
