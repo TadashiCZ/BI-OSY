@@ -81,7 +81,7 @@ public:
 	void AddPriceList( AProducer prod, APriceList priceList );
 	void Start( unsigned thrCount );
 	void Stop();
-	void customerThreadFunction( const ACustomer cust );
+	void customerThreadFunction( const ACustomer & cust );
 	void workerThreadFunction();
 	APriceList checkForPriceList( unsigned materialID );
 
@@ -102,6 +102,7 @@ private:
 	queue<Problem> mBuffer;
 	mutex mtx_buffer;
 	condition_variable cv_buffer;
+	condition_variable cv_bufferEmpty;
 
 	vector<thread> mWorkers;
 	vector<thread> mCustomerThreads;
@@ -204,21 +205,24 @@ void CWeldingCompany::Stop() {
 		cv_activeCustomers.wait( lock, [&] { return mActiveCustomers == 0; } );
 	}
 
+	for ( auto & customer : mCustomerThreads ) {
+		customer.join();
+	}
+
 	for ( unsigned i = 0 ; i < mThrCount ; ++i ) {
+		cv_bufferEmpty.notify_all();
 		cv_buffer.notify_all();
+
 	}
 
 	for ( auto & worker : mWorkers ) {
 		worker.join();
 	}
 
-	for ( auto & customer : mCustomerThreads ) {
-		customer.join();
-	}
 
 }
 
-void CWeldingCompany::customerThreadFunction( const ACustomer cust ) {
+void CWeldingCompany::customerThreadFunction( const ACustomer & cust ) {
 	cout << "Start customerThreadFunction\n";
 	while ( true ) {
 		// get orderList
@@ -236,17 +240,14 @@ void CWeldingCompany::customerThreadFunction( const ACustomer cust ) {
 			producer->SendPriceList( orderList->m_MaterialID );
 		}
 
-		// get priceList
-		APriceList priceList = checkForPriceList( orderList->m_MaterialID );
-
 		//create Problem and put it into Buffer
 		Problem prob = Problem( cust, orderList );
-
+/*
 		cout << "Put problem into buffer:\nOrders:\n";
 		for ( unsigned i = 0 ; i < orderList->m_List.size() ; ++i ) {
 			cout << "m_W: " << orderList->m_List[i].m_W << ", m_H: " << orderList->m_List[i].m_H << ", m_S: "
 			     << orderList->m_List[i].m_WeldingStrength << "\n";
-		}
+		}*/
 
 		{
 			unique_lock<mutex> lock( mtx_buffer );
@@ -273,9 +274,7 @@ void CWeldingCompany::workerThreadFunction() {
 		Problem prob;
 		{
 			unique_lock<mutex> lock( mtx_buffer );
-			if ( mBuffer.empty() ) {
-				continue;
-			}
+			cv_bufferEmpty.wait( lock, [&] { return !mBuffer.empty(); } );
 		}
 
 
@@ -287,14 +286,9 @@ void CWeldingCompany::workerThreadFunction() {
 			}
 		}
 
-		APriceList priceList;
+		APriceList priceList = checkForPriceList( prob.orderList->m_MaterialID );
 
-		{
-			unique_lock<mutex> lock_price( mtx_priceList );
-			priceList = mPriceLists[prob.orderList->m_MaterialID].priceList;
-		}
-
-		cout << "PriceList " << priceList->m_MaterialID << ":\n";
+		/*cout << "PriceList " << priceList->m_MaterialID << ":\n";
 		if ( priceList->m_List.empty() ) {
 			cout << "empty price list\n";
 		} else {
@@ -304,13 +298,13 @@ void CWeldingCompany::workerThreadFunction() {
 			}
 			cout << "\n\n";
 		}
-		cout << "Call solver\n";
+		cout << "Call solver\n";*/
 		ProgtestSolver( prob.orderList->m_List, priceList );
-		cout << "Solver result: MaterialID: " << prob.orderList->m_MaterialID << ", prices:" << endl;
+		/*cout << "Solver result: MaterialID: " << prob.orderList->m_MaterialID << ", prices:" << endl;
 		for ( unsigned i = 0 ; i < prob.orderList->m_List.size() ; ++i ) {
 			cout << "Order " << i << ": " << prob.orderList->m_List[i].m_Cost << endl;
 		}
-		cout << endl;
+		cout << endl;*/
 		prob.customer->Completed( prob.orderList );
 	}
 }
@@ -320,7 +314,8 @@ void CWeldingCompany::workerThreadFunction() {
 
 int main() {
 	using namespace std::placeholders;
-	CWeldingCompany test;
+	CWeldingCompany test, test2;
+/*
 
 	AProducer p1 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test, _1, _2 ) );
 	AProducerAsync p2 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test, _1, _2 ) );
@@ -331,6 +326,68 @@ int main() {
 	test.Start( 3 );
 	test.Stop();
 	p2->Stop();
+*/
+
+
+	AProducer p3 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducer p6 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducer p4 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducer p5 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	test2.AddProducer( p3 );
+	test2.AddProducer( p4 );
+	test2.AddProducer( p5 );
+	test2.AddProducer( p6 );
+	AProducer p7 = make_shared<CProducerSync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducerAsync p8 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducerAsync p9 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducerAsync p10 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	AProducerAsync p11 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+
+	AProducerAsync p12 = make_shared<CProducerAsync>( bind( &CWeldingCompany::AddPriceList, &test2, _1, _2 ) );
+	test2.AddProducer( p9 );
+	test2.AddProducer( p10 );
+	test2.AddProducer( p7 );
+	test2.AddProducer( p11 );
+	test2.AddProducer( p12 );
+	test2.AddProducer( p8 );
+	test2.AddCustomer( make_shared<CCustomerTest>( 20 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 4 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 20 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 8 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 20 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 4 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 4 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 20 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 8 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 20 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 4 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 24 ) );
+	test2.AddCustomer( make_shared<CCustomerTest>( 9 ) );
+	p8->Start();
+	p9->Start();
+	p10->Start();
+	p11->Start();
+	p12->Start();
+	test2.Start( 4 );
+	test.Stop();
+	p12->Stop();
+	p11->Stop();
+	p10->Stop();
+	p9->Stop();
+	p8->Stop();
+	cout << "FINISHED" << endl;
+
+
 	return 0;
 }
 
