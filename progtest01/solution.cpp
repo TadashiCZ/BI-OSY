@@ -133,25 +133,24 @@ void CWeldingCompany::AddPriceList( AProducer prod, APriceList priceList ) {
 			//cout << this_thread::get_id() << ":ADD_PRICE_LIST: priceList for this producer already exists\n";
 			return;
 		}
+
 		mPriceList.at( matID ).producers.insert( prod );
 		//cout << this_thread::get_id() << ":ADD_PRICE_LIST: new producer in priceList (now " << mPriceList.at( matID ).producers.size() << ")\n";
-		for ( auto newProd : priceList->m_List ) {
-			bool isNew = true;
-			for ( auto oldProd : mPriceList.at( matID ).priceList->m_List ) {
-				if ( ( newProd.m_W == oldProd.m_W && newProd.m_H == oldProd.m_H ) ||
-				     ( newProd.m_W == oldProd.m_H && newProd.m_H == oldProd.m_W ) ) {
-					isNew = false;
-					//cout << this_thread::get_id() << ":ADD_PRICE_LIST: found same size product\n";
-					if ( newProd.m_Cost < oldProd.m_Cost ) {
-						//	cout << this_thread::get_id() << ":ADD_PRICE_LIST: new product is cheaper\n";
-						oldProd = newProd;
+		for ( auto itNew = priceList->m_List.begin() ; itNew != priceList->m_List.end() ; ++itNew ) {
+			for ( auto itOld = mPriceList.at( priceList->m_MaterialID ).priceList->m_List.begin() ;  itOld !=  mPriceList.at( priceList->m_MaterialID ).priceList->m_List.end() ; ++itOld ) {
+				if ( ( itNew->m_W == itOld->m_W && itNew->m_H == itOld->m_H ) ||
+				     ( itNew->m_W == itOld->m_H && itNew->m_H == itOld->m_W ) ) {
+					if ( itOld->m_Cost <= itNew->m_Cost ) {
+						continue;
+					} else {
+						itOld->m_Cost = itNew->m_Cost;
+						continue;
 					}
 				}
 			}
-			if ( isNew ) {
-				mPriceList.at( matID ).priceList->Add( newProd );
-			}
+			mPriceList[priceList->m_MaterialID].priceList->m_List.push_back( *itNew );
 		}
+
 
 	}
 //	cout << this_thread::get_id() << ":ADD_PRICE_LIST: notifying about full priceLists\n";
@@ -241,7 +240,7 @@ void CWeldingCompany::workerThread() {
 		{
 			unique_lock<mutex> lockFull( mtx_PriceList );
 			cv_PriceListFull.wait( lockFull, [&] {
-				//	cout << this_thread::get_id() << ":WORK: waiting for priceList filling: producers: " << mProducers.size()				     << ", prodSize: " << mPriceList.at( pack.orderList->m_MaterialID ).producers.size() << "\n";
+				//	cout << this_thread::get_id() << ":WORK: waiting for priceList filling: producers: " << mProducers.size() << ", prodSize: " << mPriceList.at( pack.orderList->m_MaterialID ).producers.size() << "\n";
 				return mPriceList.at( pack.orderList->m_MaterialID ).producers.size() >= mProducers.size();
 			} );
 		}
@@ -256,10 +255,9 @@ void CWeldingCompany::workerThread() {
 		ProgtestSolver( pack.orderList->m_List, material.priceList );
 		//	cout << this_thread::get_id() << ":WORK: solver finished\n";
 
-		{
-			unique_lock<mutex> lockCust( mtx_Customers );
-			pack.customer->Completed( pack.orderList );
-		}
+
+		pack.customer->Completed( pack.orderList );
+
 		//	cout << this_thread::get_id() << ":WORK: order with ID " << pack.orderList->m_MaterialID << " completed\n";
 	}
 
