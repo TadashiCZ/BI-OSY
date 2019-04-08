@@ -64,14 +64,12 @@ public:
 
 	unsigned mThrCount;
 	unsigned long long int mDoneCustomers = 0;
-	unsigned bufferLimit = 10;
 
 	mutex mtx_Buffer;
 	mutex mtx_PriceList;
 	mutex mtx_Customers;
 
 	condition_variable cv_BufferEmpty;
-	condition_variable cv_BufferFull;
 	condition_variable cv_PriceListExists;
 	condition_variable cv_PriceListFull;
 
@@ -182,7 +180,6 @@ void CWeldingCompany::customerThread( ACustomer cust ) {
 
 		{
 			unique_lock<mutex> lockFull( mtx_Buffer );
-			cv_BufferFull.wait( lockFull, [&] { return mBuffer.size() < bufferLimit; } );
 			//cout << this_thread::get_id() << ":CUST: push package into buffer\n";
 			mBuffer.push( pack );
 		}
@@ -222,8 +219,6 @@ void CWeldingCompany::workerThread() {
 			pack = mBuffer.front();
 			mBuffer.pop();
 		}
-
-		cv_BufferFull.notify_one();
 
 		for ( auto & producer : mProducers ) {
 			producer->SendPriceList( pack.orderList->m_MaterialID );
@@ -271,7 +266,6 @@ void CWeldingCompany::Stop() {
 
 	cv_BufferEmpty.notify_all();
 	cv_PriceListFull.notify_all();
-	cv_BufferFull.notify_all();
 	cv_PriceListExists.notify_all();
 
 	for ( unsigned j = 0 ; j < mThrCount ; ++j ) {
